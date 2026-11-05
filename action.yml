@@ -8,11 +8,11 @@ branding:
 inputs:
   token:
     description: >-
-      VECTORA_BOT_TOKEN generated at https://bot.vectora.company. Pass it
-      via a GitHub Environment secret, not a plain repository secret.
+      VECTORA_BOT_TOKEN generated in the Vectora Bot dashboard. Pass it via a
+      GitHub Environment secret, not a plain repository secret.
     required: true
   github-token:
-    description: Token used to post the review comment (usually secrets.GITHUB_TOKEN).
+    description: Token used to read the pull request diff and publish the review comment.
     required: true
   panel-url:
     description: Base URL of the Vectora Bot panel/API.
@@ -26,105 +26,33 @@ inputs:
     description: Skip review when the PR title contains this text.
     required: false
     default: "[skip vectora]"
+  self-hosted-timeout-seconds:
+    description: Maximum time to wait for a self-hosted review result.
+    required: false
+    default: "600"
+
+outputs:
+  skipped:
+    description: "'true' when the review was skipped (draft, skip marker, fork, empty or oversized diff)."
+    value: ${{ steps.review.outputs.skipped }}
 
 runs:
   using: composite
   steps:
-    - name: Check whether this PR should be reviewed
-      id: gate
-      shell: bash
-      run: |
-        set -euo pipefail
-        skip=false
-        if [ "${{ inputs.skip-draft }}" = "true" ] && [ "${{ github.event.pull_request.draft }}" = "true" ]; then
-          echo "::notice::Skipping review — PR is a draft."
-          skip=true
-        fi
-        title="${{ github.event.pull_request.title }}"
-        marker="${{ inputs.skip-marker }}"
-        if [ -n "$marker" ] && [[ "$title" == *"$marker"* ]]; then
-          echo "::notice::Skipping review — title contains \"$marker\"."
-          skip=true
-        fi
-        echo "skip=$skip" >> "$GITHUB_OUTPUT"
-
-    - name: Fetch bot configuration
-      id: config
-      if: steps.gate.outputs.skip != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        res=$(curl -sS -w '\n%{http_code}' \
-          -H "Authorization: Bearer ${{ inputs.token }}" \
-          --get --data-urlencode "repository=${{ github.repository }}" \
-          "${{ inputs.panel-url }}/gha-bot/config")
-        body=$(echo "$res" | head -n -1)
-        status=$(echo "$res" | tail -n1)
-        if [ "$status" != "200" ]; then
-          echo "::error::Failed to fetch Vectora Bot config (HTTP $status): $body"
-          exit 1
-        fi
-        echo "provider=$(echo "$body" | jq -r .provider)" >> "$GITHUB_OUTPUT"
-        echo "model=$(echo "$body" | jq -r .model)" >> "$GITHUB_OUTPUT"
-        echo "review_style=$(echo "$body" | jq -r .review_style)" >> "$GITHUB_OUTPUT"
-        # A chave nunca vai pro log/output do job — só pro env deste
-        # processo, via GITHUB_ENV (mascarado, não aparece em `set -x`/echo).
-        api_key=$(echo "$body" | jq -r .api_key)
-        echo "::add-mask::$api_key"
-        echo "VECTORA_PROVIDER_API_KEY=$api_key" >> "$GITHUB_ENV"
-
-    - name: Download vectora-cli
-      if: steps.gate.outputs.skip != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        curl -sSL -o vectora-cli.tar.gz "${{ inputs.panel-url }}/gha-bot/download/latest"
-        mkdir -p "$RUNNER_TEMP/vectora-cli"
-        tar -xzf vectora-cli.tar.gz -C "$RUNNER_TEMP/vectora-cli"
-        echo "$RUNNER_TEMP/vectora-cli" >> "$GITHUB_PATH"
-
-    - name: Set provider API key env var
-      if: steps.gate.outputs.skip != 'true'
-      shell: bash
-      run: |
-        set -euo pipefail
-        case "${{ steps.config.outputs.provider }}" in
-          anthropic) var=ANTHROPIC_API_KEY ;;
-          openai) var=OPENAI_API_KEY ;;
-          google_genai) var=GOOGLE_API_KEY ;;
-          openrouter) var=OPENROUTER_API_KEY ;;
-          *) var="" ;;
-        esac
-        if [ -n "$var" ]; then
-          echo "$var=$VECTORA_PROVIDER_API_KEY" >> "$GITHUB_ENV"
-        fi
-
     - name: Review pull request
-      if: steps.gate.outputs.skip != 'true'
+      id: review
       shell: bash
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        REVIEW_STYLE: ${{ steps.config.outputs.review_style }}
-        MODEL_ID: "${{ steps.config.outputs.provider }}:${{ steps.config.outputs.model }}"
-      run: |
-        set -euo pipefail
-        diff=$(gh pr diff "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}")
-        task="Review this pull request (style: ${REVIEW_STYLE}). Focus on correctness, security and design issues — be concise and specific, cite file/line when possible. Diff:
-
-        ${diff}"
-        review=$(vectora-cli run --task "$task" --model "$MODEL_ID")
-        marker="<!-- vectora-bot-review -->"
-        printf '%s\n%s\n' "$marker" "$review" > "$RUNNER_TEMP/vectora-review.md"
-
-        # Edita o comentário anterior do bot em vez de empilhar um novo a
-        # cada push — procura pelo marker HTML invisível no corpo.
-        existing_id=$(gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-          --jq "[.[] | select(.body | startswith(\"$marker\"))][-1].id // empty")
-        if [ -n "$existing_id" ]; then
-          gh api "repos/${{ github.repository }}/issues/comments/$existing_id" \
-            -X PATCH -f body=@"$RUNNER_TEMP/vectora-review.md"
-        else
-          gh pr comment "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --body-file "$RUNNER_TEMP/vectora-review.md"
-        fi
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PANEL_URL: ${{ inputs.panel-url }}
+        INPUT_SKIP_DRAFT: ${{ inputs.skip-draft }}
+        INPUT_SKIP_MARKER: ${{ inputs.skip-marker }}
+        SELF_HOSTED_TIMEOUT_SECONDS: ${{ inputs.self-hosted-timeout-seconds }}
+        REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        PR_DRAFT: ${{ github.event.pull_request.draft }}
+        PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      run: bash "$ACTION_PATH/scripts/review.sh"
