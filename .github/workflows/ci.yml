@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint and tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3
+      - name: ShellCheck
+        run: shellcheck scripts/review.sh
+      - name: actionlint
+        run: uvx --from actionlint-py actionlint
+      - name: Ruff
+        run: uv run ruff check tests
+      - name: Tests
+        run: uv run pytest

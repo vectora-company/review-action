@@ -1,66 +1,145 @@
-# Vectora Bot — PR Review Action
+# Vectora Bot Review Action
 
-Automatic pull request review powered by [Vectora](https://vectora.company). Requires a **Vectora Pro** account.
+GitHub Action that asks Vectora Bot to review a pull request and publishes the
+result as one editable issue comment. It requires an active Vectora Pro
+subscription and a `VECTORA_BOT_TOKEN` from the Vectora dashboard.
 
-## Setup
+## Requirements
 
-1. Sign in to [bot.vectora.company](https://bot.vectora.company) (same account as your Vectora Pro subscription).
-2. Configure your LLM provider, model, and API key.
-3. Generate a `VECTORA_BOT_TOKEN` — it's shown once, copy it now.
-4. In your repository, create a **GitHub Environment** named `vectora-bot` (Settings → Environments) and register the token as that environment's `VECTORA_BOT_TOKEN` secret.
-5. Add the workflow below as `.github/workflows/vectora.yml`.
+- A Vectora Pro account with the GitHub Bot configured at
+  [bot.vectora.company](https://bot.vectora.company).
+- A `VECTORA_BOT_TOKEN`. Limit it to the repositories that should use the bot
+  when creating the token.
+- A GitHub Actions runner on Ubuntu x64. The hosted review path downloads the
+  Linux x64 `vectora-cli` binary.
+- `curl`, `gh`, `jq`, and `tar`. GitHub's `ubuntu-24.04` runner includes them.
+
+## Install
+
+1. In the Vectora Bot dashboard, configure a provider and model, choose a
+   review style, and create a token. Copy the token when it is shown.
+2. In the repository, create a GitHub Environment named `vectora-bot` and add
+   the token as the `VECTORA_BOT_TOKEN` environment secret.
+3. Add `.github/workflows/vectora-review.yml`:
 
 ```yaml
-name: Vectora
+name: Vectora Bot Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
-  pull-requests: write
-  contents: read
+  issues: write
+  pull-requests: read
 
 concurrency:
-  group: vectora-review-${{ github.event.pull_request.number }}
+  group: vectora-bot-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   review:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: vectora-bot
     steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - uses: brunosrz/vectora-review-action@v1
+      - uses: vectora-ltda/review-action@v1
         with:
           token: ${{ secrets.VECTORA_BOT_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-That's it — every new PR (and every push to an open PR) gets a review comment. The `concurrency` group above cancels an in-progress review when a new push arrives, so a rapid sequence of commits doesn't queue up multiple runs.
+The action does not need to check out the pull request. Do not add a checkout
+of the PR head or run scripts from the PR in this workflow: `pull_request_target`
+has access to the environment secret and write permission to publish the
+comment. The action reads the diff through GitHub's API and treats it as review
+input; it does not execute the changed code.
 
-## How it works
+The environment can require approval before its secret is released. This is
+useful for public repositories that accept pull requests from outside
+contributors.
 
-1. The action authenticates to the Vectora Bot panel with your `VECTORA_BOT_TOKEN` and fetches your configured provider, model, API key and review style — nothing is hardcoded in the action itself, so changing providers in the panel never requires touching any repository that has the bot installed.
-2. It downloads the `vectora-cli` headless binary (no Electron/GUI, Linux x64) from the same channel Vectora's desktop app uses to update.
-3. It runs `vectora-cli run` with the PR diff as context, using your own LLM API key.
-4. It posts the result as a PR comment via the workflow's own `GITHUB_TOKEN` — no extra personal access token needed. On a later push, it **edits its previous comment** in place instead of posting a new one, so the PR doesn't get spammed by one comment per commit.
+## Review modes
 
-By default, review is skipped on draft PRs, and on any PR whose title contains `[skip vectora]`.
+The action requests the current configuration from the Vectora Services API
+for every run:
+
+- **Hosted:** Vectora returns the configured provider, model, style, and
+  provider API key to the runner. The action masks the key, downloads the
+  current Linux x64 `vectora-cli`, and runs a one-shot review. The provider key
+  is available to the review process on the ephemeral GitHub runner.
+- **Self-hosted:** when self-hosted review is enabled and the Vectora instance
+  is connected, the action sends the diff to the Vectora Services gateway,
+  waits for the result, and publishes it. The provider key stays on the
+  self-hosted Vectora instance. If the instance is offline, Services can return
+  the hosted configuration instead.
+
+On later runs, the action edits its previous comment, identified by an HTML
+marker, instead of adding another comment. It skips draft pull requests by
+default and also skips a PR whose title contains `[skip vectora]`.
 
 ## Inputs
 
-| Name | Required | Description |
-|---|---|---|
-| `token` | yes | `VECTORA_BOT_TOKEN` generated at bot.vectora.company |
-| `github-token` | yes | Token used to post the review comment (usually `secrets.GITHUB_TOKEN`) |
-| `panel-url` | no | Base URL of the Vectora Bot panel/API (default `https://bot.vectora.company`) |
-| `skip-draft` | no | Skip review while the PR is a draft (default `true`) |
-| `skip-marker` | no | Skip review when the PR title contains this text (default `[skip vectora]`) |
+| Name | Required | Default | Description |
+|---|---:|---|---|
+| `token` | yes | — | `VECTORA_BOT_TOKEN`; store it in a GitHub Environment secret. |
+| `github-token` | yes | — | Token for reading the PR diff and creating/updating the comment. |
+| `panel-url` | no | `https://bot.vectora.company` | HTTPS base URL of the Vectora Bot API. |
+| `skip-draft` | no | `true` | Skip review while the PR is a draft. |
+| `skip-marker` | no | `[skip vectora]` | Skip when this text appears in the PR title. Set to an empty string to disable. |
+| `self-hosted-timeout-seconds` | no | `600` | Maximum wait for self-hosted review; accepted range is 1–21600 seconds. |
+
+## Outputs
+
+| Name | Description |
+|---|---|
+| `skipped` | `true` when no review was posted: draft PR, skip marker, an empty diff, a diff above 6 MB, or a fork PR without access to the token. |
+
+The action never fails a run for those skip cases; it fails when the panel,
+the provider or GitHub reject a request that should have worked, and the error
+message names the cause (revoked token, missing Pro subscription, repository
+scope, and so on).
+
+## Limits and behavior
+
+- Diffs above 6 MB are skipped, matching the limit the panel enforces.
+- Reviews longer than 60,000 characters are truncated to fit a GitHub comment.
+- Only one comment is kept per PR. If the previous comment cannot be edited,
+  a new one is posted.
+- The hosted `vectora-cli` runs with a minimal environment: it receives the
+  provider key but not the GitHub token.
+- `.github/vectora-review.yml` is not read by this action; trigger rules such
+  as `on_request` are not implemented here.
+
+## Permissions and fork pull requests
+
+The example uses only the permissions needed by this action: `pull-requests:
+read` to fetch the diff and `issues: write` to create or update the comment.
+`pull_request_target` runs with the base repository's token permissions, even
+for pull requests from forks. That is why this example does not check out or
+execute pull request code. The Vectora token is stored in the `vectora-bot`
+environment, so environment protection rules can require a maintainer's
+approval before the job gets access to it.
+
+## Troubleshooting
+
+- **401/403 from configuration:** check that the token is active, the Vectora
+  Pro subscription is active, and the token's repository scope includes this
+  repository.
+- **404/409 from configuration:** configure the provider and model in the
+  dashboard again.
+- **Hosted CLI download fails:** check the Services deployment and the public
+  `gha-bot` binary in R2.
+- **Self-hosted review times out:** confirm the Vectora instance is connected
+  and that its GitHub Bot integration is enabled. Increase
+  `self-hosted-timeout-seconds` if the review legitimately takes longer.
+- **Comment permission error:** keep `issues: write` in the workflow
+  permissions and confirm repository Actions policy permits `GITHUB_TOKEN` to
+  write issue comments.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
