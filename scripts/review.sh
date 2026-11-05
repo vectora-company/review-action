@@ -16,7 +16,7 @@ set -Eeuo pipefail
 : "${INPUT_GITHUB_TOKEN:?github-token é obrigatório}"
 : "${INPUT_PANEL_URL:=https://bot.vectora.company}"
 : "${INPUT_SKIP_DRAFT:=true}"
-: "${INPUT_SKIP_MARKER:=[skip vectora]}"
+: "${INPUT_SKIP_MARKER=[skip vectora]}"
 : "${REPOSITORY:?REPOSITORY é obrigatório}"
 : "${PR_NUMBER:?PR_NUMBER é obrigatório}"
 : "${PR_TITLE:=}"
@@ -77,8 +77,9 @@ validate_inputs() {
   done
   [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || fail "O número do PR é inválido."
   [[ "$REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "O nome do repositório é inválido."
-  [[ "$SELF_HOSTED_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] &&
-    ((SELF_HOSTED_TIMEOUT_SECONDS >= 1 && SELF_HOSTED_TIMEOUT_SECONDS <= 21600)) ||
+  [[ "$SELF_HOSTED_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] ||
+    fail "self-hosted-timeout-seconds deve ser um inteiro entre 1 e 21600."
+  ((SELF_HOSTED_TIMEOUT_SECONDS >= 1 && SELF_HOSTED_TIMEOUT_SECONDS <= 21600)) ||
     fail "self-hosted-timeout-seconds deve ser um inteiro entre 1 e 21600."
   PANEL_URL="${INPUT_PANEL_URL%/}"
   require_secure_url "$PANEL_URL" "A URL do painel"
@@ -177,13 +178,15 @@ download_cli() {
     --retry 3 --retry-all-errors --retry-delay 2 \
     --output "$work/$archive" "$PANEL_URL/gha-bot/download/latest" ||
     fail "Não foi possível baixar o vectora-cli do painel."
+  (cd "$work" && tar -tzf "$archive" > /dev/null 2>&1) ||
+    fail "O arquivo baixado do vectora-cli está corrompido."
   # Recusa arquivos com caminho absoluto ou com `..` antes de extrair.
   while IFS= read -r entry; do
     entry="${entry#./}"
     [[ -z "$entry" ]] && continue
     [[ "$entry" != /* && "$entry" != ".." && "$entry" != ../* && "$entry" != */../* ]] ||
       fail "O pacote do vectora-cli contém um caminho inseguro."
-  done < <(cd "$work" && tar -tzf "$archive" 2> /dev/null || fail "O arquivo baixado do vectora-cli está corrompido.")
+  done < <(cd "$work" && tar -tzf "$archive" 2> /dev/null)
   mkdir -p "$work/cli"
   (cd "$work" && tar -xzf "$archive" -C cli)
   [[ -f "$work/cli/vectora-cli" ]] || fail "O pacote baixado não contém o executável vectora-cli."
@@ -219,9 +222,9 @@ review_hosted() {
 
   # Ambiente mínimo: o processo recebe só a chave do provider, sem GH_TOKEN nem
   # qualquer outro secret do job.
-  env -i PATH="$work/cli:$PATH" HOME="$work" TMPDIR="$work" LANG=C.UTF-8 \
+  env -i PATH="$PATH" HOME="$work" TMPDIR="$work" LANG=C.UTF-8 \
     "$var=$api_key" \
-    vectora-cli run --model "$provider:$model" < "$work/task.txt" > "$work/review.md" ||
+    "$work/cli/vectora-cli" run --model "$provider:$model" < "$work/task.txt" > "$work/review.md" ||
     fail "O vectora-cli terminou com erro ao revisar o PR. Veja o log do job."
 }
 
@@ -253,7 +256,7 @@ review_self_hosted() {
     status="$(jq -r '.status // empty' "$work/response.json")"
     case "$status" in
       done)
-        jq -r '.review_text // empty' "$work/response.json" > "$work/review.md"
+        jq -r '.review_text | select(type == "string" and length > 0)' "$work/response.json" > "$work/review.md" || true
         break
         ;;
       failed)

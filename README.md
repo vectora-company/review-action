@@ -88,6 +88,28 @@ default and also skips a PR whose title contains `[skip vectora]`.
 | `skip-marker` | no | `[skip vectora]` | Skip when this text appears in the PR title. Set to an empty string to disable. |
 | `self-hosted-timeout-seconds` | no | `600` | Maximum wait for self-hosted review; accepted range is 1–21600 seconds. |
 
+## Outputs
+
+| Name | Description |
+|---|---|
+| `skipped` | `true` when no review was posted: draft PR, skip marker, an empty diff, a diff above 6 MB, or a fork PR without access to the token. |
+
+The action never fails a run for those skip cases; it fails when the panel,
+the provider or GitHub reject a request that should have worked, and the error
+message names the cause (revoked token, missing Pro subscription, repository
+scope, and so on).
+
+## Limits and behavior
+
+- Diffs above 6 MB are skipped, matching the limit the panel enforces.
+- Reviews longer than 60,000 characters are truncated to fit a GitHub comment.
+- Only one comment is kept per PR. If the previous comment cannot be edited,
+  a new one is posted.
+- The hosted `vectora-cli` runs with a minimal environment: it receives the
+  provider key but not the GitHub token.
+- `.github/vectora-review.yml` is not read by this action; trigger rules such
+  as `on_request` are not implemented here.
+
 ## Permissions and fork pull requests
 
 The example uses only the permissions needed by this action: `pull-requests:
@@ -113,6 +135,10 @@ approval before the job gets access to it.
 - **Comment permission error:** keep `issues: write` in the workflow
   permissions and confirm repository Actions policy permits `GITHUB_TOKEN` to
   write issue comments.
+
+## Development
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
