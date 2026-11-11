@@ -1,58 +1,13 @@
-name: Vectora Bot — PR Review
-description: Automatic PR review powered by Vectora Bot — requires a Vectora Pro account.
+name: Review Action
+description: Inactive composite action; it does not process or comment on pull requests.
 author: Vectora
 branding:
   icon: message-square
   color: blue
 
-inputs:
-  token:
-    description: >-
-      VECTORA_BOT_TOKEN generated in the Vectora Bot dashboard. Pass it via a
-      GitHub Environment secret, not a plain repository secret.
-    required: true
-  github-token:
-    description: Token used to read the pull request diff and publish the review comment.
-    required: true
-  panel-url:
-    description: Base URL of the Vectora Bot panel/API.
-    required: false
-    default: https://bot.vectora.company
-  skip-draft:
-    description: Skip review while the pull request is a draft.
-    required: false
-    default: "true"
-  skip-marker:
-    description: Skip review when the PR title contains this text.
-    required: false
-    default: "[skip vectora]"
-  self-hosted-timeout-seconds:
-    description: Maximum time to wait for a self-hosted review result.
-    required: false
-    default: "600"
-
-outputs:
-  skipped:
-    description: "'true' when the review was skipped (draft, skip marker, fork, empty or oversized diff)."
-    value: ${{ steps.review.outputs.skipped }}
-
 runs:
   using: composite
   steps:
-    - name: Review pull request
-      id: review
+    - name: Report inactive status
       shell: bash
-      env:
-        ACTION_PATH: ${{ github.action_path }}
-        INPUT_TOKEN: ${{ inputs.token }}
-        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-        INPUT_PANEL_URL: ${{ inputs.panel-url }}
-        INPUT_SKIP_DRAFT: ${{ inputs.skip-draft }}
-        INPUT_SKIP_MARKER: ${{ inputs.skip-marker }}
-        SELF_HOSTED_TIMEOUT_SECONDS: ${{ inputs.self-hosted-timeout-seconds }}
-        REPOSITORY: ${{ github.repository }}
-        PR_NUMBER: ${{ github.event.pull_request.number }}
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        PR_DRAFT: ${{ github.event.pull_request.draft }}
-        PR_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-      run: bash "$ACTION_PATH/scripts/review.sh"
+      run: echo "::warning::This action is inactive and does not review pull requests."
