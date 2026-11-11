@@ -1,7 +1,7 @@
 name: Release
 
 # Publicar uma tag vX.Y.Z move a tag major (vX) para o mesmo commit, que é a
-# referência que os repositórios usam (`uses: vectora-ltda/review-action@v1`).
+# referência que os repositórios usam (`uses: vectora-company/review-action@v1`).
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
