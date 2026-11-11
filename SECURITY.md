@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Do not open a public issue. Open a private
-[GitHub Security Advisory](https://github.com/vectora-ltda/review-action/security/advisories/new)
+[GitHub Security Advisory](https://github.com/vectora-company/review-action/security/advisories/new)
 for this repository. Remove credentials and personal data before reporting.
 
 ## Security model
