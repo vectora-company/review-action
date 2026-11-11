@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: vectora-bot
     steps:
-      - uses: vectora-ltda/review-action@v1
+      - uses: vectora-company/review-action@v1
         with:
           token: ${{ secrets.VECTORA_BOT_TOKEN }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
